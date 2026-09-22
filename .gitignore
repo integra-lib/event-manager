@@ -1,0 +1,7 @@
+build/
+build-*/
+b[0-9]/
+bc/
+node_modules/
+.cache/
+compile_commands.json

@@ -1,0 +1,3 @@
+[submodule "ci-shared"]
+	path = ci-shared
+	url = ../ci-shared.git

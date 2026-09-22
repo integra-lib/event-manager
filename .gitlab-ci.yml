@@ -1,0 +1,4 @@
+include:
+  - project: 'internal-projects/integra-lib/ci-shared'
+    ref: v0.1.0
+    file: '/templates/component.yml'

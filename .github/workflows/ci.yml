@@ -1,0 +1,38 @@
+# GitHub is a staging ground; GitLab is the target, and ci-shared drives the
+# pipeline there via `include: project:` (see .gitlab-ci.yml).
+#
+# Two GitHub limits make the shared setup unusable while the repositories are
+# private, both verified on this organisation:
+#   * a reusable workflow in a private repository could not be called at all —
+#     the run ended in startup_failure before any job began;
+#   * the default GITHUB_TOKEN only reaches its own repository, so checking out
+#     the ci-shared submodule fails with "Repository not found".
+#
+# So this workflow is self-contained and does what it can prove: it builds and
+# tests. Formatting and clang-tidy run through pre-commit locally and in the
+# GitLab pipeline, where the shared configs are reachable.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: gcc
+            cxx: g++
+          - compiler: clang
+            cxx: clang++
+    name: build (${{ matrix.compiler }})
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+      - run: cmake --build build -j
+      - run: ctest --test-dir build --output-on-failure
