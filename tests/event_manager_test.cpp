@@ -245,4 +245,57 @@ TEST(EventManagerTest, CarriesAPayloadThatIsNotTriviallyCopyable)
     EXPECT_EQ(received, "payload");
 }
 
+// Stands in for a platform critical section and records how it was used.
+class RecordingLock
+{
+public:
+    void lock()
+    {
+        ++locks;
+        held = true;
+    }
+
+    void unlock()
+    {
+        held = false;
+    }
+
+    int locks{0};
+    bool held{false};
+};
+
+TEST(EventManagerTest, TakesTheLockForTheDropAccountingOnly)
+{
+    FakeQueue<int, 1> queue;
+    EventManager<int, FakeQueue<int, 1>, integra::DEFAULT_MAX_SUBSCRIPTIONS, RecordingLock> manager{queue};
+
+    EXPECT_TRUE(manager.Push(TestEvent::eTick, 1, 0U));
+    // A successful push touches no counter, so it takes no lock.
+    EXPECT_EQ(manager.DropLock().locks, 0);
+
+    EXPECT_FALSE(manager.Push(TestEvent::eTick, 2, 0U));
+    EXPECT_EQ(manager.DropLock().locks, 1);
+    EXPECT_FALSE(manager.DropLock().held);
+}
+
+TEST(EventManagerTest, ReportsOutsideTheLock)
+{
+    // The callback usually logs, and a log call has no business inside a critical
+    // section that may be an interrupt lock.
+    FakeQueue<int, 1> queue;
+    EventManager<int, FakeQueue<int, 1>, integra::DEFAULT_MAX_SUBSCRIPTIONS, RecordingLock> manager{queue};
+    bool heldDuringReport  = true;
+    std::uint32_t reported = 0U;
+    manager.SetOnEventsDropped([&](std::uint8_t, std::uint32_t dropped) {
+        heldDuringReport = manager.DropLock().held;
+        reported         = dropped;
+    });
+
+    EXPECT_TRUE(manager.Push(TestEvent::eTick, 1, 0U));
+    EXPECT_FALSE(manager.Push(TestEvent::eTick, 2, 0U));
+    EXPECT_FALSE(manager.Push(TestEvent::eTick, 3, QUEUE_FULL_REPORT_PERIOD_MS));
+    EXPECT_EQ(reported, 2U);
+    EXPECT_FALSE(heldDuringReport);
+}
+
 } // namespace

@@ -47,6 +47,52 @@ inline constexpr std::size_t DEFAULT_MAX_SUBSCRIPTIONS = 12U;
 /// drop is worth knowing about; each individual drop is not.
 inline constexpr std::uint32_t QUEUE_FULL_REPORT_PERIOD_MS = 1000U;
 
+/// Anything with lock() and unlock(), guarding the queue-full accounting. On a platform
+/// where drops can come from several contexts at once — a thread and an interrupt — that
+/// is its critical section, for example a wrapper around irq_lock().
+template<typename Lock>
+concept EventManagerLockable = requires(Lock& lock) {
+    lock.lock();
+    lock.unlock();
+};
+
+namespace detail
+{
+
+/// The default: no locking, for a manager pushed to from one context.
+struct EventManagerNoLock
+{
+    constexpr void lock() noexcept {}
+
+    constexpr void unlock() noexcept {}
+};
+
+template<EventManagerLockable Lock>
+class EventManagerGuard
+{
+public:
+    explicit EventManagerGuard(Lock& lock)
+        : m_lock{lock}
+    {
+        m_lock.lock();
+    }
+
+    EventManagerGuard(const EventManagerGuard&)            = delete;
+    EventManagerGuard& operator=(const EventManagerGuard&) = delete;
+    EventManagerGuard(EventManagerGuard&&)                 = delete;
+    EventManagerGuard& operator=(EventManagerGuard&&)      = delete;
+
+    ~EventManagerGuard()
+    {
+        m_lock.unlock();
+    }
+
+private:
+    Lock& m_lock;
+};
+
+} // namespace detail
+
 /// Publish/subscribe over a queue: handlers registered per event id, events
 /// dispatched on whatever context calls `Dispatch()` or `TryDispatch()`.
 ///
@@ -59,7 +105,8 @@ inline constexpr std::uint32_t QUEUE_FULL_REPORT_PERIOD_MS = 1000U;
 /// queue's contract, not this component's, so it is asserted by the implementation
 /// that has it rather than here, where a host fake is free to hold a `std::string`.
 template<typename Payload, EventQueueLike<Event<Payload>> Queue,
-         std::size_t MAX_SUBSCRIPTIONS = DEFAULT_MAX_SUBSCRIPTIONS>
+         std::size_t MAX_SUBSCRIPTIONS = DEFAULT_MAX_SUBSCRIPTIONS,
+         EventManagerLockable Lock     = detail::EventManagerNoLock>
 class EventManager
 {
 public:
@@ -86,6 +133,13 @@ public:
     void SetOnSubscriptionsFull(OnSubscriptionsFull onSubscriptionsFull)
     {
         m_onSubscriptionsFull = std::move(onSubscriptionsFull);
+    }
+
+    /// The lock guarding the drop accounting — for a lock that needs setting up, and
+    /// for tests.
+    [[nodiscard]] Lock& DropLock() noexcept
+    {
+        return m_lock;
     }
 
     /// Reports the number of events dropped since the previous report, at most once
@@ -191,32 +245,40 @@ private:
     }
 
     /// Counts every drop but reports at most one summary per
-    /// QUEUE_FULL_REPORT_PERIOD_MS. Reachable from an interrupt — periodic producers
-    /// push from a timer expiry — so atomics only, no locks.
+    /// QUEUE_FULL_REPORT_PERIOD_MS.
+    ///
+    /// The counters are std::atomic touched only by load and store. That is lock-free
+    /// on every 32-bit MCU, including cores without atomic read-modify-write
+    /// (Cortex-M0, RV32 without the A extension), where an atomic increment or
+    /// compare-and-swap compiles to a call into a libatomic that bare-metal
+    /// toolchains do not ship. It also keeps a race between two pushing contexts well
+    /// defined. What it gives up is exactness under that race: without a Lock, a drop
+    /// landing in the same instant from two contexts can be counted once, and one
+    /// window can see two reports. A Lock that is the platform's critical section
+    /// makes both exact again.
+    ///
+    /// The callback runs outside the lock, so it is free to log.
     ///
     /// The period throttles the report, it is not a timing guarantee: `nowMs` is
     /// whatever resolution the caller's clock has, so a report can land a tick either
     /// side of the nominal period. Nothing here needs better than that.
     void ReportDrop(EventId id, std::uint32_t nowMs)
     {
-        std::ignore = m_droppedSinceReport.fetch_add(1U, std::memory_order_relaxed);
-
-        std::uint32_t lastMs = m_lastReportMs.load(std::memory_order_relaxed);
-        // Unsigned subtraction, so a 32-bit clock wrap costs at most one late report.
-        if ((nowMs - lastMs) < QUEUE_FULL_REPORT_PERIOD_MS)
+        std::uint32_t dropped = 0U;
         {
-            return;
+            const detail::EventManagerGuard<Lock> guard{m_lock};
+            const std::uint32_t count  = m_droppedSinceReport.load(std::memory_order_relaxed) + 1U;
+            const std::uint32_t lastMs = m_lastReportMs.load(std::memory_order_relaxed);
+            // Unsigned subtraction, so a 32-bit clock wrap costs at most one late report.
+            if ((nowMs - lastMs) < QUEUE_FULL_REPORT_PERIOD_MS)
+            {
+                m_droppedSinceReport.store(count, std::memory_order_relaxed);
+                return;
+            }
+            m_lastReportMs.store(nowMs, std::memory_order_relaxed);
+            m_droppedSinceReport.store(0U, std::memory_order_relaxed);
+            dropped = count;
         }
-        // Whoever wins the exchange owns this report; the losers are already counted
-        // in and appear in it or in the next one.
-        if (!m_lastReportMs.compare_exchange_strong(lastMs, nowMs, std::memory_order_relaxed))
-        {
-            return;
-        }
-        // exchange, not load then store: takes the whole count atomically, so drops
-        // that land between the window check and here are reported rather than
-        // silently discarded.
-        const std::uint32_t dropped = m_droppedSinceReport.exchange(0U, std::memory_order_relaxed);
         if (m_onEventsDropped)
         {
             m_onEventsDropped(id, dropped);
@@ -228,6 +290,7 @@ private:
     std::size_t m_count{0U};
     OnSubscriptionsFull m_onSubscriptionsFull;
     OnEventsDropped m_onEventsDropped;
+    Lock m_lock{};
     std::atomic<std::uint32_t> m_droppedSinceReport{0U};
     std::atomic<std::uint32_t> m_lastReportMs{0U};
 };

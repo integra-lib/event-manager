@@ -107,7 +107,36 @@ queue drops the event, counts it, and reports the accumulated count at most once
 not, and an unthrottled report turns a loop that is already behind into one that is
 further behind.
 
-`SetOnEventsDropped` runs on whatever context called `Push()`, an interrupt included.
+`SetOnEventsDropped` runs on whatever context called `Push()`, an interrupt included,
+and always outside the lock below.
+
+## Drops from several contexts at once
+
+The drop counters are `std::atomic`, but only loaded and stored — never incremented or
+compared-and-swapped in one step. Loads and stores are lock-free on every 32-bit MCU;
+an atomic increment is not on cores without atomic read-modify-write, Cortex-M0 and
+RV32 without the A extension, where it compiles to a call into a libatomic that
+bare-metal toolchains do not ship. That keeps the component free of any particular
+MCU, and a race between two pushing contexts well defined.
+
+What the default gives up is exactness under such a race: a drop landing in the same
+instant from a thread and an interrupt can be counted once, and one window can see two
+reports. The count is a diagnostic, and that is usually fine. When it is not, pass the
+platform's critical section as the fourth template argument, and both are exact again:
+
+```cpp
+struct IrqLock
+{
+    void lock() { m_key = irq_lock(); }
+    void unlock() { irq_unlock(m_key); }
+    unsigned m_key{};
+};
+
+integra::EventManager<AppPayload, decltype(queue), integra::DEFAULT_MAX_SUBSCRIPTIONS, IrqLock> events{queue};
+```
+
+The lock is taken only on a drop, around the few loads and stores of the accounting, and
+released before the callback runs.
 
 ## Versioning
 
