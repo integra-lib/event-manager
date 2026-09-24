@@ -9,7 +9,7 @@
 #include <type_traits>
 #include <utility>
 
-namespace integra
+namespace hwlib::events
 {
 
 /// One queued event: an identifier and the payload delivered with it.
@@ -295,4 +295,4 @@ private:
     std::atomic<std::uint32_t> m_lastReportMs{0U};
 };
 
-} // namespace integra
+} // namespace hwlib::events

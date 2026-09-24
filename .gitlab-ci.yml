@@ -1,4 +1,4 @@
 include:
-  - project: 'internal-projects/integra-lib/ci-shared'
-    ref: v0.1.0
+  - project: 'internal-projects/a000-hwlib/ci-shared'
+    ref: v0.2.0
     file: '/templates/component.yml'

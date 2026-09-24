@@ -6,6 +6,7 @@ module.exports = {
       "@semantic-release/commit-analyzer", {
         "preset": "conventionalcommits",
         "releaseRules": [
+          {"breaking": true, "release": "minor"},
           {"type": "feat", "release": "minor"},
           {"type": "fix", "release": "patch"},
           {"type": "perf", "release": "patch"},
@@ -32,7 +33,7 @@ module.exports = {
     [
       "@semantic-release/exec", {
         // The component version lives in project(... VERSION x.y.z) and is published as
-        // the INTEGRA_VERSION target property, which dependants check. A tag whose sources
+        // the HWLIB_VERSION target property, which dependants check. A tag whose sources
         // still carry the previous number would make that check lie.
         "prepareCmd": "sed -i 's/^  VERSION .*/  VERSION ${nextRelease.version}/' CMakeLists.txt && grep -q '^  VERSION ${nextRelease.version}$' CMakeLists.txt"
       }

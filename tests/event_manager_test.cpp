@@ -3,16 +3,16 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <integra/event_manager.hpp>
+#include <hwlib/events/event_manager.hpp>
 #include <string>
 #include <vector>
 
 namespace
 {
 
-using integra::Event;
-using integra::EventManager;
-using integra::QUEUE_FULL_REPORT_PERIOD_MS;
+using hwlib::events::Event;
+using hwlib::events::EventManager;
+using hwlib::events::QUEUE_FULL_REPORT_PERIOD_MS;
 
 // Stand-in for the platform queue. Single-threaded, so PopBlocking cannot block:
 // a test that would have to wait has nothing to wait for, and a would-be block is
@@ -267,7 +267,7 @@ public:
 TEST(EventManagerTest, TakesTheLockForTheDropAccountingOnly)
 {
     FakeQueue<int, 1> queue;
-    EventManager<int, FakeQueue<int, 1>, integra::DEFAULT_MAX_SUBSCRIPTIONS, RecordingLock> manager{queue};
+    EventManager<int, FakeQueue<int, 1>, hwlib::events::DEFAULT_MAX_SUBSCRIPTIONS, RecordingLock> manager{queue};
 
     EXPECT_TRUE(manager.Push(TestEvent::eTick, 1, 0U));
     // A successful push touches no counter, so it takes no lock.
@@ -283,7 +283,7 @@ TEST(EventManagerTest, ReportsOutsideTheLock)
     // The callback usually logs, and a log call has no business inside a critical
     // section that may be an interrupt lock.
     FakeQueue<int, 1> queue;
-    EventManager<int, FakeQueue<int, 1>, integra::DEFAULT_MAX_SUBSCRIPTIONS, RecordingLock> manager{queue};
+    EventManager<int, FakeQueue<int, 1>, hwlib::events::DEFAULT_MAX_SUBSCRIPTIONS, RecordingLock> manager{queue};
     bool heldDuringReport  = true;
     std::uint32_t reported = 0U;
     manager.SetOnEventsDropped([&](std::uint8_t, std::uint32_t dropped) {

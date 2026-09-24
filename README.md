@@ -2,23 +2,23 @@
 
 Publish/subscribe over a queue you supply: handlers per event id, dispatch on your own loop or thread.
 
-Part of [integra-lib](https://github.com/integra-lib) — architecture-independent C++20
+Part of [hwlib](https://github.com/integra-lib) — architecture-independent C++20
 components shared between firmware projects. Header-only,
 no exceptions, no RTTI.
 
 ## Use it
 
 ```bash
-git submodule add git@github.com:integra-lib/event-manager.git external/integra/event-manager
+git submodule add git@github.com:integra-lib/event-manager.git external/hwlib/event-manager
 ```
 
 ```cmake
-add_subdirectory(external/integra/event-manager)
-target_link_libraries(app PRIVATE Integra::event_manager)
+add_subdirectory(external/hwlib/event-manager)
+target_link_libraries(app PRIVATE Hwlib::event_manager)
 ```
 
 ```cpp
-#include <integra/event_manager.hpp>
+#include <hwlib/events/event_manager.hpp>
 ```
 
 Each component carries its own include directory, so this header stays unreachable
@@ -29,12 +29,12 @@ a build that happens to work.
 
 The manager does not own a queue, it borrows one. That is what keeps the component
 architecture-independent: on a device the queue is an RTOS primitive, in a test it is
-an array. An implementation satisfies `integra::EventQueueLike`:
+an array. An implementation satisfies `hwlib::events::EventQueueLike`:
 
 ```cpp
-bool TryPush(const integra::Event<Payload>&);  // never blocks — reached from an ISR
-bool TryPop(integra::Event<Payload>&);         // returns false when empty
-bool PopBlocking(integra::Event<Payload>&);    // waits for an event
+bool TryPush(const hwlib::events::Event<Payload>&);  // never blocks — reached from an ISR
+bool TryPop(hwlib::events::Event<Payload>&);         // returns false when empty
+bool PopBlocking(hwlib::events::Event<Payload>&);    // waits for an event
 ```
 
 A Zephyr adapter over `k_msgq` is about twenty lines and belongs in the project, next
@@ -47,30 +47,30 @@ class MsgqEventQueue
 public:
     // k_msgq copies the event as raw bytes, so this queue — not the component —
     // is what requires a trivially copyable payload.
-    static_assert(std::is_trivially_copyable_v<integra::Event<Payload>>);
+    static_assert(std::is_trivially_copyable_v<hwlib::events::Event<Payload>>);
 
     MsgqEventQueue()
     {
         k_msgq_init(&m_queue, reinterpret_cast<char*>(m_buffer.data()),
-                    sizeof(integra::Event<Payload>), DEPTH);
+                    sizeof(hwlib::events::Event<Payload>), DEPTH);
     }
 
-    bool TryPush(const integra::Event<Payload>& event)
+    bool TryPush(const hwlib::events::Event<Payload>& event)
     {
         return k_msgq_put(&m_queue, &event, K_NO_WAIT) == 0;
     }
-    bool TryPop(integra::Event<Payload>& event)
+    bool TryPop(hwlib::events::Event<Payload>& event)
     {
         return k_msgq_get(&m_queue, &event, K_NO_WAIT) == 0;
     }
-    bool PopBlocking(integra::Event<Payload>& event)
+    bool PopBlocking(hwlib::events::Event<Payload>& event)
     {
         return k_msgq_get(&m_queue, &event, K_FOREVER) == 0;
     }
 
 private:
-    alignas(alignof(integra::Event<Payload>))
-        std::array<std::uint8_t, sizeof(integra::Event<Payload>) * DEPTH> m_buffer{};
+    alignas(alignof(hwlib::events::Event<Payload>))
+        std::array<std::uint8_t, sizeof(hwlib::events::Event<Payload>) * DEPTH> m_buffer{};
     k_msgq m_queue{};
 };
 ```
@@ -79,7 +79,7 @@ private:
 
 ```cpp
 MsgqEventQueue<AppPayload, 8> queue;
-integra::EventManager<AppPayload, decltype(queue)> events{queue};
+hwlib::events::EventManager<AppPayload, decltype(queue)> events{queue};
 
 events.Subscribe(AppEvent::eTick, [](const AppPayload& payload) { OnTick(payload); });
 
@@ -132,7 +132,7 @@ struct IrqLock
     unsigned m_key{};
 };
 
-integra::EventManager<AppPayload, decltype(queue), integra::DEFAULT_MAX_SUBSCRIPTIONS, IrqLock> events{queue};
+hwlib::events::EventManager<AppPayload, decltype(queue), hwlib::events::DEFAULT_MAX_SUBSCRIPTIONS, IrqLock> events{queue};
 ```
 
 The lock is taken only on a drop, around the few loads and stores of the accounting, and
@@ -144,9 +144,9 @@ Every component is released on its own, tagged `vX.Y.Z`. Pre-1.0, a minor releas
 break the API, which is why dependants accept a single minor.
 
 ```bash
-git -C external/integra/event-manager fetch --tags
-git -C external/integra/event-manager checkout v0.2.0
-git add external/integra/event-manager && git commit -m "build: bump event-manager to v0.2.0"
+git -C external/hwlib/event-manager fetch --tags
+git -C external/hwlib/event-manager checkout v0.2.0
+git add external/hwlib/event-manager && git commit -m "build: bump event-manager to v0.2.0"
 ```
 
 ## In a consumer's CI
